@@ -13,7 +13,10 @@ export default function PracticeArea({
   settings,
   soundMuted,
   onSessionComplete,
-  onRestart
+  onRestart,
+  onRequestMoreWords,
+  isTimedSession = false,
+  timedSeconds = 30
 }) {
   // Session State
   const [itemIndex, setItemIndex] = useState(0); // index in targetItems
@@ -33,7 +36,9 @@ export default function PracticeArea({
   });
 
   // Timed session state
-  const [timeLeft, setTimeLeft] = useState(activeLesson?.timeLimitSeconds || null);
+  const [timeLeft, setTimeLeft] = useState(
+    activeLesson?.timeLimitSeconds || (isTimedSession ? (timedSeconds || 30) : null)
+  );
 
   // Key tracking to prevent duplicate repeats
   const pressedKeysRef = useRef(new Set());
@@ -62,9 +67,35 @@ export default function PracticeArea({
     }
   }, [soundMuted, settings]);
 
+  // Finish whole session
+  const finishSession = useCallback(() => {
+    const elapsedSeconds = stats.startTime ? Math.max(1, Math.round((Date.now() - stats.startTime) / 1000)) : 1;
+    const totalAttempted = stats.attempted;
+    const correct = stats.correct;
+    const accuracy = totalAttempted > 0 ? Math.round((correct / totalAttempted) * 100) : 0;
+    // Standard WPM: (characters / 5) / (minutes)
+    const minutes = elapsedSeconds / 60;
+    const wpm = minutes > 0 ? Math.round((correct / 5) / minutes) : 0;
+
+    onSessionComplete({
+      totalAttempted,
+      correct,
+      incorrect: stats.incorrect,
+      accuracy,
+      timeTaken: elapsedSeconds,
+      avgTimePerLetter: correct > 0 ? (elapsedSeconds / correct).toFixed(2) : 0,
+      wpm,
+      charBreakdown: stats.charBreakdown,
+      mode,
+      lessonId: activeLesson?.id || null,
+      passed: accuracy >= (settings?.minPassAccuracy || 80)
+    });
+  }, [stats, onSessionComplete, mode, activeLesson, settings]);
+
   // Timed mode countdown
   useEffect(() => {
-    if (activeLesson?.timeLimitSeconds && stats.startTime) {
+    const effectiveLimit = activeLesson?.timeLimitSeconds || (isTimedSession ? (timedSeconds || 30) : null);
+    if (effectiveLimit && stats.startTime) {
       timerRef.current = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 1) {
@@ -79,7 +110,7 @@ export default function PracticeArea({
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [activeLesson, stats.startTime]);
+  }, [activeLesson, isTimedSession, timedSeconds, stats.startTime, finishSession]);
 
   // Play audio preview of expected morse in Learn mode
   const playCurrentAudio = useCallback(() => {
@@ -106,31 +137,6 @@ export default function PracticeArea({
   const handleBackspace = useCallback(() => {
     setCurrentInput(prev => prev.slice(0, -1));
   }, []);
-
-  // Finish whole session
-  const finishSession = useCallback(() => {
-    const elapsedSeconds = stats.startTime ? Math.max(1, Math.round((Date.now() - stats.startTime) / 1000)) : 1;
-    const totalAttempted = stats.attempted;
-    const correct = stats.correct;
-    const accuracy = totalAttempted > 0 ? Math.round((correct / totalAttempted) * 100) : 0;
-    // Standard WPM: (characters / 5) / (minutes)
-    const minutes = elapsedSeconds / 60;
-    const wpm = minutes > 0 ? Math.round((correct / 5) / minutes) : 0;
-
-    onSessionComplete({
-      totalAttempted,
-      correct,
-      incorrect: stats.incorrect,
-      accuracy,
-      timeTaken: elapsedSeconds,
-      avgTimePerLetter: correct > 0 ? (elapsedSeconds / correct).toFixed(2) : 0,
-      wpm,
-      charBreakdown: stats.charBreakdown,
-      mode,
-      lessonId: activeLesson?.id || null,
-      passed: accuracy >= (settings?.minPassAccuracy || 80)
-    });
-  }, [stats, onSessionComplete, mode, activeLesson, settings]);
 
   // Submit current letter
   const handleSubmitLetter = useCallback(() => {
@@ -168,11 +174,23 @@ export default function PracticeArea({
         if (isWordMode && charIndex < currentWord.length - 1) {
           setCharIndex(prev => prev + 1);
         } else if (itemIndex < targetItems.length - 1) {
-          setItemIndex(prev => prev + 1);
+          const nextIdx = itemIndex + 1;
+          setItemIndex(nextIdx);
           setCharIndex(0);
+
+          // Append new shuffled batches when user approaches end during timed practice
+          if (timeLeft !== null && nextIdx >= targetItems.length - 4) {
+            onRequestMoreWords?.();
+          }
         } else {
           // Completed all target items
-          finishSession();
+          if (timeLeft !== null) {
+            onRequestMoreWords?.();
+            setItemIndex(prev => prev + 1);
+            setCharIndex(0);
+          } else {
+            finishSession();
+          }
         }
       }, 200);
     } else {
@@ -187,7 +205,7 @@ export default function PracticeArea({
         setCurrentInput('');
       }, 400);
     }
-  }, [currentInput, expectedMorse, isSingleElementMode, currentChar, isWordMode, charIndex, currentWord, itemIndex, targetItems, finishSession]);
+  }, [currentInput, expectedMorse, isSingleElementMode, currentChar, isWordMode, charIndex, currentWord, itemIndex, targetItems, finishSession, timeLeft, onRequestMoreWords]);
 
   // Auto-advance if enabled and matches
   useEffect(() => {
@@ -278,6 +296,43 @@ export default function PracticeArea({
             <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
               {activeLesson.instruction}
             </p>
+          </div>
+        )}
+
+        {/* Monkeytype Upcoming Words Stream Preview */}
+        {isWordMode && targetItems.length > 1 && (
+          <div className="words-stream-preview" style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '0.85rem',
+            marginBottom: '1.25rem',
+            fontSize: '0.95rem',
+            fontFamily: 'var(--font-mono)',
+            overflow: 'hidden',
+            maxWidth: '100%',
+            userSelect: 'none'
+          }}>
+            {targetItems.slice(Math.max(0, itemIndex - 1), itemIndex + 6).map((word, wIdx) => {
+              const actualIndex = Math.max(0, itemIndex - 1) + wIdx;
+              const isCurrent = actualIndex === itemIndex;
+              const isPast = actualIndex < itemIndex;
+              return (
+                <span
+                  key={`${actualIndex}-${word}`}
+                  style={{
+                    color: isCurrent ? 'var(--accent-dot)' : isPast ? 'var(--text-dim)' : 'var(--text-muted)',
+                    fontWeight: isCurrent ? 800 : 500,
+                    borderBottom: isCurrent ? '2px solid var(--accent-dot)' : '2px solid transparent',
+                    paddingBottom: '2px',
+                    opacity: isPast ? 0.35 : isCurrent ? 1 : 0.65,
+                    transition: 'all var(--transition-fast)'
+                  }}
+                >
+                  {word}
+                </span>
+              );
+            })}
           </div>
         )}
 
@@ -373,7 +428,7 @@ export default function PracticeArea({
       {/* Live Stats Bar */}
       <div className="practice-stats-bar">
         <div className="stat-item">
-          <span>Target:</span>
+          <span>{isWordMode ? 'Word:' : 'Target:'}</span>
           <strong>{itemIndex + 1}/{targetItems.length}</strong>
         </div>
 

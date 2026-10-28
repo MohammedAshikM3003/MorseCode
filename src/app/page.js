@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Header from '../components/Header';
 import ScrollProgress from '../components/ScrollProgress';
 import BackgroundGlow from '../components/BackgroundGlow';
@@ -15,6 +15,7 @@ import MorseDocumentWriter from '../components/MorseDocumentWriter';
 import MorseTranslatorVoice from '../components/MorseTranslatorVoice';
 
 import { DEFAULT_LESSONS, PRACTICE_WORDS_BANK } from '../lib/defaultLessons';
+import { MorseWordGenerator, generateWordBatch } from '../lib/wordGenerator';
 import {
   getStoredSettings,
   saveStoredSettings,
@@ -45,8 +46,24 @@ export default function Home() {
   const [customLessons, setCustomLessons] = useState(() => getCustomLessons());
   const [activeLesson, setActiveLesson] = useState(null);
 
-  // Practice Targets
-  const [targetItems, setTargetItems] = useState(['CAT', 'DOG', 'SUN', 'HI']);
+  // Difficulty & Practice Type state
+  const [difficulty, setDifficulty] = useState(() => settings.difficulty || 'beginner');
+  const [practiceType, setPracticeType] = useState(() => settings.practiceType || 'words');
+  const wordGenRef = useRef(null);
+
+  // Initialize word generator
+  if (!wordGenRef.current) {
+    wordGenRef.current = new MorseWordGenerator({
+      difficulty: settings?.difficulty || 'beginner',
+      unlockedLevels: getUnlockedLevels(),
+      customLessons: getCustomLessons()
+    });
+  }
+
+  // Practice Targets: Generate exactly 20 shuffled words for initial practice session
+  const [targetItems, setTargetItems] = useState(() => {
+    return wordGenRef.current.nextBatch(20);
+  });
   const [sessionResults, setSessionResults] = useState(null);
   const [practiceKey, setPracticeKey] = useState(0); // increment to force remount session
 
@@ -61,12 +78,23 @@ export default function Home() {
 
   // Sync settings & stats from localStorage on mount
   useEffect(() => {
-    setSettings(getStoredSettings());
+    const loadedSettings = getStoredSettings();
+    setSettings(loadedSettings);
+    if (loadedSettings.difficulty) setDifficulty(loadedSettings.difficulty);
+    if (loadedSettings.practiceType) setPracticeType(loadedSettings.practiceType);
     setUnlockedLevels(getUnlockedLevels());
     setCustomLessons(getCustomLessons());
     setStats(getStoredStats());
     setHistory(getSessionHistory());
   }, []);
+
+  // Sync word generator with unlocked levels & custom lessons
+  useEffect(() => {
+    if (wordGenRef.current) {
+      wordGenRef.current.setUnlockedLevels(unlockedLevels);
+      wordGenRef.current.setCustomLessons(customLessons);
+    }
+  }, [unlockedLevels, customLessons]);
 
   // Update soundEngine muted state when settings or soundMuted changes
   const handleSaveSettings = (newSettings) => {
@@ -96,6 +124,48 @@ export default function Home() {
     setSessionResults(null);
     setPracticeKey(prev => prev + 1);
   };
+
+  // Switch difficulty
+  const handleSelectDifficulty = (newDiff) => {
+    setDifficulty(newDiff);
+    if (wordGenRef.current) {
+      wordGenRef.current.setDifficulty(newDiff);
+      wordGenRef.current.setUnlockedLevels(unlockedLevels);
+      wordGenRef.current.setCustomLessons(customLessons);
+      const newWords = wordGenRef.current.nextBatch(20);
+      setTargetItems(newWords);
+    }
+    setActiveLesson(null);
+    setSessionResults(null);
+    setPracticeKey(prev => prev + 1);
+    handleSaveSettings({ ...settings, difficulty: newDiff });
+  };
+
+  // Switch practice type (20 words vs 30s timed sprint)
+  const handleSelectPracticeType = (newType) => {
+    setPracticeType(newType);
+    if (wordGenRef.current) {
+      wordGenRef.current.setDifficulty(difficulty);
+      wordGenRef.current.setUnlockedLevels(unlockedLevels);
+      wordGenRef.current.setCustomLessons(customLessons);
+      const newWords = wordGenRef.current.nextBatch(20);
+      setTargetItems(newWords);
+    }
+    setActiveLesson(null);
+    setSessionResults(null);
+    setPracticeKey(prev => prev + 1);
+    handleSaveSettings({ ...settings, practiceType: newType });
+  };
+
+  // Requirement 5: Append new shuffled batches when user approaches end during timed practice
+  const handleRequestMoreWords = useCallback(() => {
+    if (wordGenRef.current) {
+      wordGenRef.current.setUnlockedLevels(unlockedLevels);
+      wordGenRef.current.setCustomLessons(customLessons);
+      const nextBatch = wordGenRef.current.nextBatch(20);
+      setTargetItems(prev => [...prev, ...nextBatch]);
+    }
+  }, [unlockedLevels, customLessons]);
 
   // Drill a single character from the Morse Reference
   const handleDrillCharacter = (char) => {
@@ -130,6 +200,10 @@ export default function Home() {
 
   // Try again
   const handleTryAgain = () => {
+    if (!activeLesson && wordGenRef.current) {
+      const freshBatch = wordGenRef.current.nextBatch(20);
+      setTargetItems(freshBatch);
+    }
     setSessionResults(null);
     setPracticeKey(prev => prev + 1);
   };
@@ -145,9 +219,14 @@ export default function Home() {
       }
     }
 
-    // Pick 4 random words from practice words bank
-    const shuffled = [...PRACTICE_WORDS_BANK].sort(() => 0.5 - Math.random());
-    setTargetItems(shuffled.slice(0, 4));
+    // Generate next 20 words batch without repeating until bank is used
+    if (wordGenRef.current) {
+      wordGenRef.current.setDifficulty(difficulty);
+      wordGenRef.current.setUnlockedLevels(unlockedLevels);
+      wordGenRef.current.setCustomLessons(customLessons);
+      const nextBatch = wordGenRef.current.nextBatch(20);
+      setTargetItems(nextBatch);
+    }
     setActiveLesson(null);
     setSessionResults(null);
     setPracticeKey(prev => prev + 1);
@@ -190,6 +269,10 @@ export default function Home() {
             <ModeSelector
               currentMode={currentMode}
               onSelectMode={handleSelectMode}
+              currentDifficulty={difficulty}
+              onSelectDifficulty={handleSelectDifficulty}
+              currentPracticeType={practiceType}
+              onSelectPracticeType={handleSelectPracticeType}
             />
 
             {/* If session results exist, show results screen, else show practice stage */}
@@ -211,6 +294,9 @@ export default function Home() {
                 soundMuted={soundMuted}
                 onSessionComplete={handleSessionComplete}
                 onRestart={handleTryAgain}
+                onRequestMoreWords={handleRequestMoreWords}
+                isTimedSession={practiceType === 'timed' && !activeLesson}
+                timedSeconds={30}
               />
             )}
           </div>

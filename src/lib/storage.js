@@ -23,6 +23,8 @@ export const DEFAULT_SETTINGS = {
   reducedMotion: false,
   autoAdvanceOnValid: false,
   showMnemonicHint: true,
+  difficulty: 'beginner',
+  practiceType: 'words',
 };
 
 export function getStoredSettings() {
