@@ -67,6 +67,25 @@ A minimal, modern, beginner-friendly Morse code typing practice web application 
    - Add, publish, and delete custom classroom lessons.
    - Unlock all levels for teaching demonstrations.
 
+9. **Google Gemini AI Learning Assistant (Optional)**:
+   - Built with the official `@google/genai` JavaScript SDK and Next.js App Router (`/api/tutor`).
+   - **AI Morse Tutor**: Q&A tutor explaining Morse patterns, dot/dash rhythms, and mnemonics.
+   - **Targeted Practice Drills**: Analyzes your weakest letters and generates personalized practice drills.
+   - **Themed Passage Generator**: Generates custom practice telegrams strictly validated against your unlocked learning levels.
+   - **Session Coach Feedback**: On-demand post-session analysis explaining mistake patterns and recommending the next step.
+   - **Privacy & Security**: `GEMINI_API_KEY` is server-only (never exposed to client or browser bundles), bounded token limits, and in-memory rate limiting.
+   - **Offline / Fallback Resilience**: 100% functional without an API key using built-in curated drills and explanations.
+
+10. **Firebase Authentication & Cloud Firestore**:
+   - Built with the official `firebase` v13 SDK.
+   - **Authentication**: Email/Password registration & login, Google Sign-In, Password Reset, and persistent session state.
+   - **Cloud Firestore**:
+     - `users/{uid}`: Profile information and timestamp.
+     - `users/{uid}/sessions/{sessionId}`: Every completed practice session with WPM, accuracy, character breakdown, and duration.
+     - `users/{uid}/progress/current`: Aggregate high scores, best WPM, accuracy, and unlocked levels.
+   - **Data Isolation**: Firestore security rules (`firestore.rules`) strictly enforce that users can only read and write their own data (`request.auth.uid == userId`).
+   - **Guest Mode & Offline Fallback**: All practice features operate smoothly in local guest mode using `localStorage`. When a user logs in, cloud and local progress are merged intelligently.
+
 ---
 
 ## 🚀 Getting Started
@@ -74,6 +93,42 @@ A minimal, modern, beginner-friendly Morse code typing practice web application 
 ### Prerequisites
 - Node.js 18+ (tested on Node.js 24)
 - npm
+
+### Environment Setup
+Copy `.env.example` to `.env.local`:
+```bash
+cp .env.example .env.local
+```
+Inside `.env.local`:
+```env
+# Optional: Google Gemini AI
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-1.5-flash
+
+# Optional: Firebase Authentication & Cloud Firestore
+NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key_here
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project_id.firebasestorage.app
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_firebase_app_id
+```
+
+### Firebase Console Setup Steps
+1. **Enable Authentication**:
+   - Go to [Firebase Console](https://console.firebase.google.com/) -> Build -> Authentication -> Get Started.
+   - Under Sign-in method, enable **Email/Password** and **Google**.
+2. **Create Cloud Firestore**:
+   - In Firebase Console, go to Build -> **Firestore Database** -> Create Database.
+   - Choose your location (e.g., `asia-southeast1` or `nam5/us-central1`).
+   - Choose "Start in production mode" or "test mode".
+3. **Deploy Security Rules**:
+   - Navigate to the **Rules** tab in Firestore Database.
+   - Copy and paste the rules from `firestore.rules` in this project.
+   - Click **Publish**. Or deploy via Firebase CLI:
+     ```bash
+     firebase deploy --only firestore:rules
+     ```
 
 ### Installation
 ```bash
